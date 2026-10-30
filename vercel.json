@@ -4,12 +4,12 @@
     "scrapers": {
       "root": "scrapers",
       "runtime": "python",
-      "entrypoint": "run_all.py"
+      "entrypoint": "app.py"
     },
     "sofia_municipality": {
       "root": "scrapers/sources/sofia_municipality",
       "runtime": "python",
-      "entrypoint": "scraper.py"
+      "entrypoint": "app.py"
     },
     "web": {
       "root": "web",
