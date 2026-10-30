@@ -1,0 +1,39 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "scrapers": {
+      "root": "scrapers",
+      "runtime": "python"
+    },
+    "sofia_municipality": {
+      "root": "scrapers/sources/sofia_municipality",
+      "runtime": "python"
+    },
+    "web": {
+      "root": "web",
+      "framework": "nextjs",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "scrapers",
+          "format": "url",
+          "env": "SCRAPERS_URL"
+        },
+        {
+          "type": "service",
+          "service": "sofia_municipality",
+          "format": "url",
+          "env": "SOFIA_MUNICIPALITY_URL"
+        }
+      ]
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "web"
+      }
+    }
+  ]
+}
