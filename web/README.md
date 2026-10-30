@@ -1,31 +1,32 @@
-# Web Application
+# Web Application (Streamlit)
 
-This folder contains the website that consumes scraper output and visualizes EU funding opportunities.
+Simple, open-source dashboard that consumes the scraper JSON and visualizes matching EU funding opportunities.
 
-## Suggested structure
+## Stack
 
+- **Streamlit** — pure Python, easiest to develop, test, and ship.
+- Reads `data/eu_funding_tenders_matches.json` (see `docs/scraper-to-web-contract.md`).
+
+## Local development
+
+```bash
+cd web
+pip install -r requirements.txt
+streamlit run app.py
 ```
-web/
-├── frontend/         # UI (React / Next.js / etc.)
-├── backend/          # API that loads and serves funding data
-└── package.json       # or equivalent
-```
 
-## Responsibilities
+## Deployment
 
-- Load the latest structured data produced by the scrapers from `data/*.json`.
-- Provide filtering, search, and rich visualizations.
-- Link back to the original funding call pages.
-- Surface `match_score` and `matched_keywords` so users understand relevance.
+- Streamlit Community Cloud (free for public repos)
+- Or any Docker host (Dockerfile included)
 
 ## Data contract
 
-**Primary reference:** `docs/scraper-to-web-contract.md`
+Follows `docs/scraper-to-web-contract.md`. The app expects the `matches` array from the scraper output.
 
-Also see the schema in `docs/architecture.md`.
+## Features
 
-The current scraper writes to `data/eu_funding_tenders_matches.json`. The backend should read this file (or a configured path) and expose the `matches` array via an API for the frontend.
-
-## Getting started
-
-Scaffold a Next.js or React + FastAPI project here when ready. The only dependency on the scrapers is the JSON contract documented above.
+- Filter by minimum match score
+- Search in title / summary
+- Sortable table with portal links
+- Expandable details for top matches
