@@ -3,11 +3,13 @@
   "services": {
     "scrapers": {
       "root": "scrapers",
-      "runtime": "python"
+      "runtime": "python",
+      "entrypoint": "run_all.py"
     },
     "sofia_municipality": {
       "root": "scrapers/sources/sofia_municipality",
-      "runtime": "python"
+      "runtime": "python",
+      "entrypoint": "scraper.py"
     },
     "web": {
       "root": "web",
