@@ -220,8 +220,10 @@ def _mk(d: int, m: int, y: int | None, default_year: int | None) -> dt.date | No
 def find_dates(s: str, default_year: int | None = None) -> list[tuple[int, dt.date]]:
     out: list[tuple[int, dt.date]] = []
     taken: list[tuple[int, int]] = []
-    years_in = [int(y) for y in re.findall(r"(?<!\d)(20\d{2})(?!\d)", s)]
-    dy = years_in[0] if years_in else default_year
+    # "за 2027 г." names the programme/implementation year, not the year of the dates in the sentence
+    years_in = [int(y) for y in re.findall(r"(?<!за )(?<!\d)(20\d{2})(?!\d)", s)]
+    prog_year_only = not years_in and re.search(r"за 20\d{2}", s)
+    dy = years_in[0] if years_in else (default_year or (TODAY.year if prog_year_only else None))
     for m in DATE_SPAN.finditer(s):
         y = int(m.group(4)) if m.group(4) else dy
         mon = MONTHS[m.group(3).lower()]
@@ -276,9 +278,9 @@ def extract_deadline(text: str, default_year: int | None = None) -> dict:
     opens = None
     ds = [d for _, d in dates]
     if len(ds) >= 2 and re.search(r"\bот\b|from|between|[–-]|период", sent, re.I):
-        opens, deadline = ds[0], max(ds)
-        if deadline <= opens:
-            opens, deadline = None, ds[0]
+        # first date after the opening one ("от 15 октомври до 15 ноември ... за периода 2027 г." -> 15 Nov)
+        later = [d for d in ds[1:] if d > ds[0]]
+        opens, deadline = (ds[0], later[0]) if later else (None, ds[0])
     elif len(ds) == 1 and OPEN_KW.search(sent) and not CLOSE_KW.search(sent):
         # "На 1 септември стартира приемът ..." -> opening date only, no deadline known
         return {"date": None, "opens": ds[0].isoformat(), "raw": shorten(sent, 400)}
@@ -431,7 +433,9 @@ def make_record(*, source: str, source_url: str, program_name: str, text: str, f
         "title": name,
         "summary": shorten(desc, 400),
         "url": source_url,
-        "status": compute_status(deadline, text, status),  # open / closed / upcoming / unknown
+        "status": ("closed" if not status and re.search(r"приключи(ла)? приемът|приключи подаването",
+                                                         deadline.get("raw") or "", re.I)
+                   else compute_status(deadline, text, status)),  # open / closed / upcoming / unknown
         "start_date": deadline.get("opens") or published_at,
         "deadline": deadline.get("date"),  # YYYY-MM-DD or null
         "source": SOURCE_ID,
