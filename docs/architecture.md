@@ -16,7 +16,7 @@ Other Grok bots can independently push changes into `scrapers/` or `web/`.
 ├── scrapers/          # All scraping code and outputs
 ├── web/               # Frontend + backend that consume the data
 ├── docs/              # Architecture, schemas, decisions
-└── data/              # (optional) Shared JSON/CSV outputs or raw dumps
+└── data/              # Shared JSON outputs from scrapers
 ```
 
 ## Scrapers
@@ -25,7 +25,7 @@ Other Grok bots can independently push changes into `scrapers/` or `web/`.
 - Shared helpers (session management, retries, logging, schema validation) live in `scrapers/common/`.
 - Preferred output format: structured JSON following a common schema (see below).
 - Scrapers should be runnable independently and idempotent where possible.
-- Outputs can be written to `data/` or consumed directly by the web app.
+- Outputs are written to `data/` (e.g. `data/eu_funding_tenders_matches.json`).
 
 ### Suggested JSON schema for a funding opportunity
 
@@ -41,14 +41,18 @@ Other Grok bots can independently push changes into `scrapers/` or `web/`.
   "budget": { "amount": 1000000, "currency": "EUR" },
   "countries": ["EU", "BG", "DE"],
   "status": "open",
-  "scraped_at": "2026-10-30T12:00:00Z"
+  "scraped_at": "2026-10-30T12:00:00Z",
+  "match_score": 0.42,
+  "matched_keywords": ["software", "AI"]
 }
 ```
+
+**See `docs/scraper-to-web-contract.md` for the exact current contract and consumption rules.**
 
 ## Web application
 
 - Lives in `web/`.
-- Backend loads the latest scraper outputs (JSON files, a simple database, or an API).
+- Backend loads the latest scraper outputs from `data/*.json`.
 - Frontend provides:
   - Searchable / filterable table of opportunities
   - Deadline calendars or timelines
@@ -62,9 +66,10 @@ Other Grok bots can independently push changes into `scrapers/` or `web/`.
 - Scrapers should not depend on web code, and vice versa (shared only via the data schema).
 - Document new sources in `scrapers/README.md`.
 - Keep secrets out of the repo (use environment variables or GitHub secrets).
+- **Agents working on the web app must follow `docs/scraper-to-web-contract.md`.**
 
 ## Next steps
 
-1. Implement the first real scraper under `scrapers/sources/`.
-2. Define and lock the funding opportunity schema.
-3. Scaffold the web app so it can load and display sample data.
+1. Implement the first real scraper under `scrapers/sources/` (done for EU Funding & Tenders).
+2. Define and lock the funding opportunity schema (see contract doc).
+3. Scaffold the web app so it can load and display the JSON from `data/`.
