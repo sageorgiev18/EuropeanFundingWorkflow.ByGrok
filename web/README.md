@@ -13,14 +13,19 @@ web/
 
 ## Responsibilities
 
-- Load the latest structured data produced by the scrapers.
+- Load the latest structured data produced by the scrapers from `data/*.json`.
 - Provide filtering, search, and rich visualizations.
 - Link back to the original funding call pages.
+- Surface `match_score` and `matched_keywords` so users understand relevance.
 
 ## Data contract
 
-The web app expects funding opportunities in the JSON schema defined in `docs/architecture.md`.
+**Primary reference:** `docs/scraper-to-web-contract.md`
+
+Also see the schema in `docs/architecture.md`.
+
+The current scraper writes to `data/eu_funding_tenders_matches.json`. The backend should read this file (or a configured path) and expose the `matches` array via an API for the frontend.
 
 ## Getting started
 
-Scaffold a Next.js or React + FastAPI project here when ready.
+Scaffold a Next.js or React + FastAPI project here when ready. The only dependency on the scrapers is the JSON contract documented above.
