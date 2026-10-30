@@ -31,6 +31,7 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -900,23 +901,44 @@ def scrape_ogf(http: PoliteSession) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- relevance scoring
-# The shared company profile has English keywords; municipal pages are Bulgarian, so each keyword
-# is also matched by its Bulgarian equivalents (stems).
-BG_SYNONYMS = {
-    "software": ["софтуер"],
-    "artificial intelligence": ["изкуствен интелект"],
-    "ai": ["изкуствен интелект"],
-    "machine learning": ["машинно обучение"],
-    "data analytics": ["анализ на данни", "данни"],
-    "digital": ["дигитал", "цифров"],
-    "it services": ["ит услуги", "информационни технологии", "икт"],
-    "cloud": ["облачн"],
-    "cybersecurity": ["киберсигурност"],
-    "web application": ["уеб приложение", "уебсайт", "онлайн платформ"],
-    "automation": ["автоматизац"],
-    "innovation": ["иноваци"],
-    "startup": ["стартъп", "стартиращ"],
+# The shared company profile is in English (keywords, sectors, free-text description); municipal pages
+# are Bulgarian. Every profile term is expanded to Bulgarian stems and matched as a word prefix
+# (case-insensitive, Cyrillic-aware) over title (weight x2) and summary/description/beneficiaries (x1).
+# Keywords/sectors weigh 1.0, terms extracted from the description 0.6. Each stem is credited once.
+# score = 1 - exp(-K * weighted_hits)  -> one title keyword ~0.55, three body keywords ~0.7, capped at 1.
+SCORE_K = 0.4
+W_KEYWORD, W_DESCRIPTION, W_TITLE, W_BODY = 1.0, 0.6, 2.0, 1.0
+BG_TERMS = {  # english term / word -> stems (lower case). Avoid stems that hit generic municipal text.
+    "software": ["software", "софтуер", "програмно осигуряване"],
+    "software development": ["software", "софтуер", "програмно осигуряване", "разработване на софтуер"],
+    "development": [],
+    "ai": ["ai", "изкуствен интелект", "изкуствения интелект"],
+    "artificial intelligence": ["artificial intelligence", "изкуствен интелект", "изкуствения интелект"],
+    "machine learning": ["machine learning", "машинно обучение", "машинното обучение"],
+    "data": ["data", "данни"],
+    "data analytics": ["data analytics", "анализ на данни", "аналитик", "големи данни", "отворени данни"],
+    "analytics": ["analytics", "аналитик"],
+    "digital": ["digital", "дигитал", "цифров"],
+    "digital transformation": ["digital transformation", "дигитална трансформация", "дигитализац", "цифровизац",
+                               "цифрова трансформация"],
+    "digital services": ["digital services", "дигитални услуги", "електронни услуги", "е-услуги", "дигитал"],
+    "it": ["ит", "икт", "информационн", "information technolog"],
+    "it services": ["it services", "ит услуги", "икт", "информационн"],
+    "technology": ["technolog", "технолог"],
+    "cloud": ["cloud", "облачн"],
+    "cybersecurity": ["cybersecurity", "киберсигурност", "кибер"],
+    "web application": ["web", "уеб", "онлайн платформ", "мобилно приложение", "мобилни приложения"],
+    "automation": ["automat", "автоматизац", "роботиз"],
+    "innovation": ["innovat", "иноваци", "иновативн"],
+    "startup": ["startup", "start-up", "стартъп", "стартиращ"],
+    "enterprise": ["enterprise", "предприят", "бизнес", "мсп", "фирм", "компани"],
+    "business": ["business", "бизнес", "предприемач", "фирм"],
+    "public sector": ["public sector", "публичния сектор", "публичен сектор", "публични институции", "общински администрации", "администрац", "електронно управление"],
+    "transformation": ["трансформац"],
 }
+STOPWORDS = {"and", "or", "for", "the", "of", "a", "an", "to", "in", "on", "with", "services", "service",
+             "clients", "client", "solutions", "our", "we", "company", "provide", "providing"}
+_LETTER = r"0-9a-zа-яѐ-ӿ"
 
 
 def load_profile(path: str | None) -> dict:
@@ -926,27 +948,84 @@ def load_profile(path: str | None) -> dict:
     return {"name": "Sofia Municipality (no profile)", "keywords": []}
 
 
-def _kw_hit(kw: str, text: str) -> bool:
-    terms = [kw.lower()] + BG_SYNONYMS.get(kw.lower(), [])
-    for t in terms:
-        if len(t) <= 3:  # short tokens like "AI" / "ИКТ" need word boundaries
-            if re.search(rf"(?<![\w]){re.escape(t)}(?![\w])", text):
-                return True
-        elif t in text:
-            return True
-    return False
+def _expand(term: str) -> list[str]:
+    t = term.lower().strip()
+    if t in BG_TERMS:
+        return [x for x in dict.fromkeys(BG_TERMS[t] + ([t] if BG_TERMS[t] else []))]
+    stems = [t]
+    for w in t.split():  # multi-word term without an entry -> expand its known words
+        stems += BG_TERMS.get(w, [])
+    return list(dict.fromkeys(stems))
+
+
+def _description_terms(desc: str) -> list[str]:
+    """'Software development, AI, data analytics, and digital transformation services for public sector and
+    enterprise clients.' -> ['software', 'ai', 'data analytics', 'digital transformation', 'public sector', 'enterprise']"""
+    terms = []
+    for chunk in re.split(r"[,.;:()/]|\band\b|\bfor\b|\bor\b|\bwith\b", (desc or "").lower()):
+        words = [w for w in re.findall(r"[\w\-]+", chunk) if w not in STOPWORDS and w not in BG_TERMS.get("development", ["x"]) and w != "development"]
+        if not words:
+            continue
+        phrase = " ".join(words)
+        if phrase in BG_TERMS or len(words) == 1:
+            terms.append(phrase)
+        else:
+            terms += [w for w in words]
+    return [t for t in dict.fromkeys(terms) if len(t) >= 2]
+
+
+def profile_terms(profile: dict) -> list[tuple[str, float, list[str]]]:
+    """[(readable term, weight, stems)] from keywords + sectors (1.0) and description (0.6)."""
+    out, seen = [], set()
+    for t in list(profile.get("keywords", [])) + list(profile.get("sectors", [])):
+        if t.lower() not in seen:
+            seen.add(t.lower()); out.append((t, W_KEYWORD, _expand(t)))
+    for t in _description_terms(profile.get("description", "")):
+        if t not in seen:
+            seen.add(t); out.append((t, W_DESCRIPTION, _expand(t)))
+    return [x for x in out if x[2]]
+
+
+def _stem_in(stem: str, text: str) -> bool:
+    tail = rf"(?![{_LETTER}])" if len(stem) <= 3 else ""
+    return re.search(rf"(?<![{_LETTER}]){re.escape(stem)}{tail}", text) is not None
 
 
 def score_records(records: list[dict], profile: dict) -> None:
-    """Same formula as eu_funding_tenders.score_match: hits (+0.5 per multi-word phrase) / #keywords."""
-    keywords = profile.get("keywords", [])
+    terms = sorted(profile_terms(profile), key=lambda x: -x[1])
     for r in records:
-        text = re.sub(r"\s+", " ", " ".join(str(r.get(k) or "") for k in
-                                            ("title", "description", "target_beneficiaries"))).lower()
-        hits = [kw for kw in keywords if _kw_hit(kw, text)]
-        bonus = sum(0.5 for kw in hits if " " in kw)
-        r["match_score"] = round(min(1.0, (len(hits) + bonus) / max(len(keywords), 1)), 3) if keywords else 0.0
-        r["matched_keywords"] = hits
+        title = (r.get("title") or "").lower()
+        body = re.sub(r"\s+", " ", " ".join(str(r.get(k) or "") for k in
+                                            ("summary", "description", "target_beneficiaries"))).lower()
+        used: set[str] = set()
+        total, matched = 0.0, []
+        for name, w, stems in terms:
+            best = 0.0
+            for st in stems:
+                if st in used:
+                    continue
+                if _stem_in(st, title):
+                    best = max(best, w * W_TITLE)
+                elif _stem_in(st, body):
+                    best = max(best, w * W_BODY)
+            if best:
+                used.update(st for st in stems if _stem_in(st, title) or _stem_in(st, body))
+                total += best
+                matched.append(name)
+        r["match_score"] = round(min(1.0, 1 - math.exp(-SCORE_K * total)), 3) if terms else 0.0
+        r["matched_keywords"] = matched
+
+
+def rescore_file(path: str, profile_path: str | None) -> list[dict]:
+    """Re-score an existing <source>_matches.json in place (and rewrite the CSV) without re-scraping."""
+    with open(path, encoding="utf-8") as f:
+        payload = json.load(f)
+    recs = payload["matches"] if isinstance(payload, dict) else payload
+    profile = load_profile(profile_path)
+    score_records(recs, profile)
+    recs.sort(key=lambda r: r["match_score"], reverse=True)
+    write_outputs(recs, os.path.dirname(os.path.abspath(path)), profile.get("name", "N/A"))
+    return recs
 
 
 # --------------------------------------------------------------------------- output
@@ -1011,7 +1090,14 @@ def main(argv: Iterable[str] | None = None) -> int:
     ap.add_argument("--min-score", type=float, default=0.0,
                     help="drop records scoring below this (default 0 = keep all; the dataset is small)")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--rescore", nargs="?", const=os.path.join(DEFAULT_OUTPUT, OUTPUT_BASENAME + ".json"),
+                    metavar="JSON", help="only re-score an existing output file (default data/%s.json), no scraping"
+                    % OUTPUT_BASENAME)
     args = ap.parse_args(list(argv) if argv is not None else None)
+    if args.rescore:
+        recs = rescore_file(args.rescore, args.profile)
+        print(f"Re-scored {len(recs)} records in {args.rescore}")
+        return 0
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     http = PoliteSession(delay=args.delay)
