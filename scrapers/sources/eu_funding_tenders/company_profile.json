@@ -1,0 +1,20 @@
+{
+  "name": "Your Company",
+  "description": "Software development, AI, data analytics, and digital transformation services for public sector and enterprise clients.",
+  "keywords": [
+    "software",
+    "artificial intelligence",
+    "AI",
+    "machine learning",
+    "data analytics",
+    "digital",
+    "IT services",
+    "cloud",
+    "cybersecurity",
+    "web application",
+    "automation"
+  ],
+  "cpv_codes": [],
+  "sectors": ["IT", "digital services", "software development"],
+  "min_score": 0.15
+}
