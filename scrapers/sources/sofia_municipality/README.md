@@ -34,53 +34,30 @@ Polite crawling: custom User-Agent, ≥1.5 s between requests to the same host (
 
 ## Output
 
-Written to the repo-level `data/` folder (per `scrapers/README.md`):
+Follows `docs/scraper-to-web-contract.md` (same shape as `eu_funding_tenders`):
 
-- `data/sofia_programs.json` – list of records (UTF-8, `ensure_ascii=False`)
-- `data/sofia_programs.csv` – flattened, UTF-8 with BOM (opens correctly in Excel); `documents` joined with ` | `
+- `data/sofia_municipality_matches.json` – `{"profile", "scraped_at", "count", "matches": [...]}`
+- `data/sofia_municipality_matches.csv` – flattened, UTF-8 with BOM (Excel), `documents` joined with ` | `
 
-`data/*.json` is git-ignored, so run the scraper to regenerate the data.
+Both are git-ignored (`data/*.json`, `data/*_matches.csv`); run the scraper to regenerate. The web app
+(`web/app.py`, `web/app/api/opportunities/route.ts`) merges every `data/*_matches.json`, so Sofia records
+appear next to the EU ones automatically.
 
-## Record fields
+`match_score` / `matched_keywords` use the shared profile `scrapers/sources/eu_funding_tenders/company_profile.json`
+(override with `--profile`, filter with `--min-score`, default 0 = keep all). English keywords are also matched by
+Bulgarian equivalents (e.g. `digital` → `дигитал`/`цифров`).
 
-| field | meaning |
-|---|---|
-| `id` | stable id `source:sha1(source|url|name)[:16]` |
-| `source`, `source_url` | site key and page the record came from |
-| `program_name` | programme / call name (Bulgarian as published) |
-| `record_type` | `programme`, `programme_strand`, `call_window`, `call_announcement`, `open_call`, `standing_instrument`, `funding_digest` |
-| `description` | first ~700 chars of the page text |
-| `funder` | e.g. Столична община, Дирекция „Култура“, Програма „Европа“, Invest Sofia, ОГФ МСП |
-| `target_beneficiaries` | eligible applicants paragraph, when found |
-| `funding_amount` | `{raw, min, max, currency, total_budget, total_budget_currency}` – `raw` is the source sentence(s); numbers parsed from “до 12 782 евро”, “5 000 – 10 000 лв.”, etc. Currency `EUR` or `BGN` |
-| `deadline` | `{date, opens, raw}` – ISO dates when parseable, `raw` = source sentence |
-| `status` | `open` / `closed` / `upcoming` / `unknown` (computed from dates vs. run date, or from the portal listing) |
-| `language` | `bg` / `en` |
-| `documents` | attachment URLs (PDF/DOC/ZIP, Liferay `/documents/d/…`, Axter `service-download-file.php`) |
-| `published_at`, `scraped_at` | ISO date / UTC timestamp |
-| `title`, `url`, `budget`, `countries`, `region` | aliases matching `docs/architecture.md` |
+## Record fields (inside `matches`)
 
-Example (shape of a real record, shortened):
+Contract fields: `id` (`sofia_municipality:<site>:<sha1[:16]>`), `call_identifier` (always null), `title`, `summary`,
+`url`, `status` (`open`/`closed`/`upcoming`/`unknown`), `start_date` (opening date or publication date, ISO),
+`deadline` (`YYYY-MM-DD` or null), `source` (always `"sofia_municipality"`), `scraped_at`, `match_score`, `matched_keywords`.
 
-```json
-{
-  "id": "sofia.bg:…",
-  "source": "sofia.bg",
-  "source_url": "https://www.sofia.bg/bg/web/guest/w/7249919",
-  "program_name": "До 6 април се приемат кандидатури по Програмата „Социални иновации“ 2026 …",
-  "record_type": "call_announcement",
-  "funder": "Столична община (Sofia Municipality)",
-  "target_beneficiaries": "Могат да кандидатстват юридически лица с нестопанска цел и народни читалища …",
-  "funding_amount": {"raw": "През 2026 г. по Програмата ще се финансират проекти на стойност до 12 782 евро всеки, а общият бюджет е до 209 629 евро.",
-                     "min": null, "max": 12782.0, "currency": "EUR", "total_budget": 209629.0, "total_budget_currency": "EUR"},
-  "deadline": {"date": "2026-04-06", "opens": null, "raw": "До 6 април 2026 г. включително е отворено кандидатстването …"},
-  "status": "closed",
-  "language": "bg",
-  "documents": ["https://www.sofia.bg/documents/d/guest/2026-03-20-programa-socialni-inovacii-2026"],
-  "countries": ["BG"],
-  "scraped_at": "2026-10-30T13:58:00Z"
-}
-```
+Extras: `description`, `program`, `budget` `{amount, currency}`, `countries` (`["BG"]`), `site` (e.g. `kultura.sofia.bg`),
+`region`, `record_type` (`programme`, `programme_strand`, `call_window`, `call_announcement`, `open_call`,
+`standing_instrument`, `funding_digest`), `funder`, `target_beneficiaries`, `funding_amount`
+`{raw, min, max, currency, total_budget, total_budget_currency}`, `opens_at`, `deadline_raw` (source sentence),
+`language`, `documents`, `published_at`.
 
 ## Known limitations
 
@@ -90,4 +67,4 @@ Example (shape of a real record, shortened):
 - Invest Sofia currently has no open own funding call; its “Възможности за финансиране” posts (2022–2023) are digests of third-party opportunities and are stored with `status: unknown` and no parsed deadline/amount. Only Bulgarian pages are scraped.
 - OGF guarantee schemes are standing instruments (no deadline); pages were last updated 2019–2020.
 - The mladite.sofia.bg and kultura.sofia.bg application portals list only *currently active* campaigns.
-- Observed parse errors in the test run (2026-10-30): when a page only states an *opening* date (e.g. “На 1 септември стартира приемът…”), that date can land in `deadline.date`; Invest Sofia’s accelerator page gets a wrong `total_budget` (31 000 000 BGN is the guarantee fund’s historical portfolio, not the accelerator budget). Verify against `raw` before relying on the numbers.
+- Opening-only sentences (“На 1 септември стартира приемът…”) now go to `opens_at` instead of `deadline`, and legal references (“Решение № … от 11.12.2008”) are ignored; Invest Sofia’s accelerator no longer reports the guarantee fund’s 31 000 000 BGN portfolio as its budget. These fixes take effect on the next full scraper run. Verify against `deadline_raw` / `funding_amount.raw`.
