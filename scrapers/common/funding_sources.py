@@ -71,7 +71,6 @@ def robots_allowed(url, session=None):
         rp=RobotFileParser(); rp.parse(response.text.splitlines())
         return rp.can_fetch(USER_AGENT, url)
     except requests.RequestException:
-        # fail closed when cannot establish policy
         return False
 
 
@@ -97,7 +96,6 @@ def html_links(source, seeds, *, session=None, limit=100, delay=1.5, strict_robo
 
 
 def ted_search(*, query='PD >= 20261001', limit=50, session=None):
-    """Official anonymous TED Search API v3. Query syntax documented by TED."""
     endpoint='https://api.ted.europa.eu/v3/notices/search'
     body={"query":query,"fields":["publication-number","notice-title","publication-date","deadline-receipt-tender-date-lot"],"limit":limit,"page":1}
     response=(session or requests.Session()).post(endpoint,json=body,headers={**HEADERS,'Content-Type':'application/json'},timeout=45)
@@ -120,7 +118,6 @@ def ted_search(*, query='PD >= 20261001', limit=50, session=None):
 
 
 def cordis_csv(url, *, session=None, limit=100):
-    """Read an official CORDIS CSV export URL supplied by operator; avoid guessing download endpoints."""
     if urlparse(url).netloc not in ('cordis.europa.eu','data.europa.eu','www.cordis.europa.eu'):
         raise ValueError('CORDIS export must be an official EU host')
     response=get(url,session=session,timeout=60)
@@ -138,7 +135,6 @@ def cordis_csv(url, *, session=None, limit=100):
 
 
 def eu_grants_search(*, query, limit=50, session=None):
-    """Use the same SEDIA endpoint as existing EU tender scraper; caller supplies a verified grants query."""
     endpoint='https://api.tech.ec.europa.eu/search-api/prod/rest/search'
     files={'query':('query.json',json.dumps(query),'application/json')}
     r=(session or requests.Session()).post(endpoint,params={'apiKey':'SEDIA','text':'***'},data={'pageSize':str(limit),'pageNumber':'1'},files=files,timeout=60)
