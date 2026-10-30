@@ -1,32 +1,40 @@
-# Web Application (Streamlit)
+# Web Application (Next.js + React)
 
-Simple, open-source dashboard that consumes the scraper JSON and visualizes matching EU funding opportunities.
+React UI that consumes the scraper JSON and visualizes matching EU funding opportunities.
 
 ## Stack
 
-- **Streamlit** — pure Python, easiest to develop, test, and ship.
-- Reads `data/eu_funding_tenders_matches.json` (see `docs/scraper-to-web-contract.md`).
+- **Next.js 14** (App Router) + **React** + TypeScript
+- API route (`/api/opportunities`) reads `data/eu_funding_tenders_matches.json`
+- Follows the contract in `docs/scraper-to-web-contract.md`
 
 ## Local development
 
 ```bash
 cd web
-pip install -r requirements.txt
-streamlit run app.py
+npm install
+npm run dev
 ```
+
+Open http://localhost:3000
 
 ## Deployment
 
-- Streamlit Community Cloud (free for public repos)
-- Or any Docker host (Dockerfile included)
+- Vercel (recommended, free for public repos)
+- Or any Node host / Docker
 
-## Data contract
+## Project structure
 
-Follows `docs/scraper-to-web-contract.md`. The app expects the `matches` array from the scraper output.
+```
+web/
+├── app/
+│   ├── layout.tsx
+│   ├── page.tsx          ← main React page
+│   ├── globals.css
+│   └── api/opportunities/route.ts
+├── package.json
+├── next.config.js
+└── tsconfig.json
+```
 
-## Features
-
-- Filter by minimum match score
-- Search in title / summary
-- Sortable table with portal links
-- Expandable details for top matches
+The old Streamlit files (`app.py`, `requirements.txt`, `Dockerfile`) can be removed if you no longer need them.
