@@ -1,33 +1,55 @@
 # Scrapers
 
-This folder contains all code that scrapes EU funding websites.
+This folder contains all code that scrapes funding websites.
 
 ## Structure
 
 ```
 scrapers/
-├── common/          # Shared utilities
-├── sources/         # One subdirectory per funding source
-└── requirements.txt
+├── run_all.py       # Runs every scraper.py under sources/
+├── requirements.txt
+└── sources/         # One subdirectory per funding source
+    ├── eu_funding_tenders/
+    ├── sofia_municipality/
+    └── ...
 ```
+
+## Run all scrapers
+
+From the repo root:
+
+```bash
+python scrapers/run_all.py
+```
+
+or from the scrapers folder:
+
+```bash
+cd scrapers
+python run_all.py
+```
+
+The script discovers every `sources/*/scraper.py` and runs them one by one. Each scraper is executed from its own directory so relative paths and local files work correctly.
 
 ## Conventions
 
-- Each source should be independently runnable.
-- Output JSON that matches the schema in `docs/architecture.md`.
+- Each source should be independently runnable via its own `scraper.py`.
+- Output JSON that matches the schema in `docs/scraper-to-web-contract.md` (or `docs/architecture.md`).
+- Prefer writing results to `../data/` so the web app can consume them.
 - Use clear logging and handle rate limits / errors gracefully.
-- Prefer `requests` + `BeautifulSoup` / `lxml` or Scrapy for larger sites.
 
 ## Adding a new source
 
 1. Create `sources/<source_name>/`.
-2. Implement the scraper so it writes valid funding-opportunity JSON.
-3. Document the source and any special notes here.
+2. Add a `scraper.py` that can be run directly.
+3. Make it write valid funding-opportunity JSON.
+4. Document the source in its own README and optionally here.
 
 ## Available sources
 
-- `sources/sofia_municipality/` — Sofia Municipality funding programmes (sofia.bg, kultura.sofia.bg, mladite.sofia.bg, evropa-so.bg, investsofia.com, ogf-sofia.com). Run `python scraper.py`; writes `data/sofia_programs.json` + `.csv`. Consume the JSON list directly: each record has the `docs/architecture.md` fields (`id`, `title`, `url`, `deadline`, `status`, `budget`, `countries`) plus `funding_amount`, `deadline.raw`, `documents`. See its README.
+- `sources/eu_funding_tenders/` — EU Funding & Tenders Portal (SEDIA API). Writes `data/eu_funding_tenders_matches.json`.
+- `sources/sofia_municipality/` — Sofia Municipality funding programmes. Writes `data/sofia_programs.json` (+ CSV).
 
 ## Output location
 
-Scrapers may write results to `../data/` or expose them via a simple local interface for the web app.
+Scrapers write results to `../data/` (or a path documented in each source) so the web application can load them.
