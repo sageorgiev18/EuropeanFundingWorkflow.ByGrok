@@ -7,7 +7,7 @@ import streamlit as st
 
 # Paths
 REPO_ROOT = Path(__file__).parent.parent
-DATA_FILE = REPO_ROOT / "data" / "eu_funding_tenders_matches.json"
+DATA_DIR = REPO_ROOT / "data"  # every scraper writes data/<source>_matches.json
 
 st.set_page_config(
     page_title="EU Funding Workflow",
@@ -90,16 +90,27 @@ st.caption("Matching calls for tenders • European Commission Funding & Tenders
 
 @st.cache_data
 def load_matches():
-    if not DATA_FILE.exists():
+    matches, scraped, profile = [], [], None
+    for path in sorted(DATA_DIR.glob("*_matches.json")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+        except (OSError, ValueError):
+            continue
+        matches.extend(payload.get("matches", []))
+        profile = profile or payload.get("profile")
+        if payload.get("scraped_at"):
+            scraped.append(payload["scraped_at"])
+    if not matches:
         return pd.DataFrame(), {}
-    with open(DATA_FILE, encoding="utf-8") as f:
-        payload = json.load(f)
-    matches = payload.get("matches", [])
     df = pd.DataFrame(matches)
+    if "match_score" not in df.columns:
+        df["match_score"] = 0.0
+    df["match_score"] = df["match_score"].fillna(0.0)
     meta = {
-        "profile": payload.get("profile"),
-        "scraped_at": payload.get("scraped_at"),
-        "count": payload.get("count", len(matches)),
+        "profile": profile,
+        "scraped_at": max(scraped) if scraped else "N/A",
+        "count": len(matches),
     }
     return df, meta
 

@@ -28,5 +28,5 @@ data/*.json
 !data/.gitkeep
 *.log
 
-# sofia_municipality scraper outputs (regenerate with scraper.py)
-data/sofia_programs.csv
+# CSV side outputs of scrapers (regenerate with the scraper)
+data/*_matches.csv

@@ -4,8 +4,10 @@ Sofia Municipality (Столична община) funding programmes scraper.
 
 Collects funding programmes, calls for proposals and application windows from
 the official websites of Sofia Municipality and its funding bodies, and writes
-normalized records (see ../../SCHEMA.md) to output/sofia_programs.json and
-output/sofia_programs.csv.
+normalized records to data/sofia_municipality_matches.json (and a flattened
+data/sofia_municipality_matches.csv). The JSON follows docs/scraper-to-web-contract.md:
+{"profile", "scraped_at", "count", "matches": [opportunity, ...]} with
+source = "sofia_municipality", so the web app picks it up next to the other scrapers.
 
 Sources (all public, server-rendered HTML or WordPress REST JSON):
   * sofia.bg              - municipal portal (Liferay): programme pages + site search discovery
@@ -50,6 +52,9 @@ USER_AGENT = (
 )
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUTPUT = os.path.normpath(os.path.join(HERE, "..", "..", "..", "data"))  # repo-level data/ per scrapers/README.md
+SOURCE_ID = "sofia_municipality"  # contract: `source` identifies the scraper
+OUTPUT_BASENAME = f"{SOURCE_ID}_matches"  # contract: data/<source>_matches.json
+DEFAULT_PROFILE = os.path.normpath(os.path.join(HERE, "..", "eu_funding_tenders", "company_profile.json"))
 TODAY = dt.date.today()
 
 FUNDER_SO = "Столична община (Sofia Municipality)"
@@ -193,6 +198,13 @@ DATE_SPAN = re.compile(rf"от\s+(\d{{1,2}})\s+до\s+(\d{{1,2}})\s+({MONTH_RE})
 DEADLINE_KW = re.compile(r"кандидатств|прием|приемат|подава|подават|подаване|краен срок|срок за|срокът|"
                          r"отворен|отваря|набиране|applications?|deadline|submit", re.I)
 NOT_DEADLINE_KW = re.compile(r"изпълнени|реализаци|отчет|оценяване|класиране|заседание|договор", re.I)
+# words that mark a date as the *start* of an application window
+OPEN_KW = re.compile(r"стартира|започва|открива|откриваме|отваря|отворена за кандидатстване от|"
+                     r"\bот\s+(?:\d|00:)|opens?\b|starts?\b|from\b", re.I)
+# words that mark a date as the *end* of an application window
+CLOSE_KW = re.compile(r"\bдо\s+(?:\d|23:|00:)|краен срок|крайният срок|срокът|не по-късно|deadline|until|by\s+\d", re.I)
+# "Решение № 759 от 11.12.2008 г." / "Заповед № СОА24-РД09-3266/11.07.2024 г." are legal references, not deadlines
+LEGAL_REF = re.compile(r"(?:Решение|Заповед|Протокол)\s*№\s*[\w\-/.]+(?:\s*от\s*\d{1,2}\.\d{1,2}\.\d{4}\s*г?\.?)?", re.I)
 
 
 def _mk(d: int, m: int, y: int | None, default_year: int | None) -> dt.date | None:
@@ -242,28 +254,36 @@ def extract_deadline(text: str, default_year: int | None = None) -> dict:
     for sent in sentences(text):
         if not DEADLINE_KW.search(sent):
             continue
-        dates = find_dates(sent, default_year)
+        dates = find_dates(LEGAL_REF.sub(" ", sent), default_year)
         if not dates:
             continue
         score = 2
         if re.search(r"кандидатств|прием|приемат|подава|deadline|applications?", sent, re.I):
             score += 2
+        if CLOSE_KW.search(sent):
+            score += 1  # an explicit end date beats a start-only announcement
+        elif len(dates) == 1 and OPEN_KW.search(sent):
+            score -= 1
         if NOT_DEADLINE_KW.search(sent) and score < 4:
             score -= 2
         if best is None or score > best[0]:
             best = (score, sent, dates)
-        if score >= 4:
+        if score >= 5:
             break
     if not best or best[0] <= 0:
         return {"date": None, "opens": None, "raw": None}
     _, sent, dates = best
     opens = None
-    if len(dates) >= 2 and re.search(r"\bот\b|from|between|[–-]", sent, re.I):
-        opens, deadline = dates[0][1], dates[1][1]
-        if deadline < opens:
-            opens, deadline = None, dates[0][1]
+    ds = [d for _, d in dates]
+    if len(ds) >= 2 and re.search(r"\bот\b|from|between|[–-]|период", sent, re.I):
+        opens, deadline = ds[0], max(ds)
+        if deadline <= opens:
+            opens, deadline = None, ds[0]
+    elif len(ds) == 1 and OPEN_KW.search(sent) and not CLOSE_KW.search(sent):
+        # "На 1 септември стартира приемът ..." -> opening date only, no deadline known
+        return {"date": None, "opens": ds[0].isoformat(), "raw": shorten(sent, 400)}
     else:
-        deadline = dates[0][1]
+        deadline = ds[0]
     return {"date": deadline.isoformat(), "opens": opens.isoformat() if opens else None,
             "raw": shorten(sent, 400)}
 
@@ -364,6 +384,8 @@ def compute_status(deadline: dict, text: str = "", force: str | None = None) -> 
         if o and TODAY < dt.date.fromisoformat(o):
             return "upcoming"
         return "open" if TODAY <= dd else "closed"
+    if o and TODAY < dt.date.fromisoformat(o):
+        return "upcoming"
     if re.search(r"затворена за кандидатстване|приключи(ла)? приемът", text, re.I):
         return "closed"
     return "unknown"
@@ -396,33 +418,46 @@ def make_record(*, source: str, source_url: str, program_name: str, text: str, f
         deadline = extract_deadline(text, default_year)
     if amount is None:
         amount = extract_amount(text)
-    rid = hashlib.sha1(f"{source}|{source_url}|{program_name}".encode("utf-8")).hexdigest()[:16]
+    # `source` here is the site key (e.g. "kultura.sofia.bg"); the record's contract `source` is SOURCE_ID
+    site = source
+    rid = hashlib.sha1(f"{site}|{source_url}|{program_name}".encode("utf-8")).hexdigest()[:16]
     desc = description if description is not None else shorten(text, 700)
+    name = clean(program_name)
+    amount = amount or {}
     rec = {
-        "id": f"{source}:{rid}",
-        "source": source,
-        "source_url": source_url,
-        "program_name": clean(program_name),
-        "record_type": record_type,
+        # --- fields from docs/scraper-to-web-contract.md (same order as eu_funding_tenders) ---
+        "id": f"{SOURCE_ID}:{site}:{rid}",
+        "call_identifier": None,  # municipal calls carry no official call ID
+        "title": name,
+        "summary": shorten(desc, 400),
+        "url": source_url,
+        "status": compute_status(deadline, text, status),  # open / closed / upcoming / unknown
+        "start_date": deadline.get("opens") or published_at,
+        "deadline": deadline.get("date"),  # YYYY-MM-DD or null
+        "source": SOURCE_ID,
+        "scraped_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat(),
+        "match_score": 0.0,  # filled in by score_records()
+        "matched_keywords": [],
+        # --- docs/architecture.md extras ---
         "description": desc,
+        "program": name,
+        "budget": ({"amount": amount.get("max") or amount.get("total_budget"),
+                    "currency": amount.get("currency") or amount.get("total_budget_currency")}
+                   if (amount.get("max") or amount.get("total_budget")) else None),
+        "countries": ["BG"],
+        # --- Sofia-specific extras ---
+        "site": site,
+        "region": "Sofia (Столична община)",
+        "record_type": record_type,
         "funder": funder,
         "target_beneficiaries": beneficiaries if beneficiaries is not None else extract_beneficiaries(text),
         "funding_amount": amount,
-        "deadline": deadline,
-        "status": compute_status(deadline, text, status),
+        "opens_at": deadline.get("opens"),
+        "deadline_raw": deadline.get("raw"),
         "language": language_of(program_name + " " + text[:2000]),
         "documents": documents or [],
         "published_at": published_at,
-        "countries": ["BG"],
-        "region": "Sofia (Столична община)",
-        "scraped_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
-    # aliases for the repo-wide schema in docs/architecture.md
-    rec["title"] = rec["program_name"]
-    rec["url"] = source_url
-    rec["budget"] = ({"amount": amount.get("max") or amount.get("total_budget"),
-                      "currency": amount.get("currency") or amount.get("total_budget_currency")}
-                     if (amount.get("max") or amount.get("total_budget")) else None)
     return rec
 
 
@@ -812,7 +847,11 @@ def scrape_investsofia(http: PoliteSession) -> list[dict]:
         for p in data or []:
             txt, soup = wp_text(p["content"]["rendered"])
             title = BeautifulSoup(p["title"]["rendered"], "lxml").get_text(" ", strip=True)
-            out.append(make_record(source=src, source_url=p["link"], program_name=title, text=txt,
+            amt = extract_amount(txt)
+            # the page's only "total" figure is the guarantee fund's historical portfolio, not the
+            # accelerator budget -> do not report it as the programme budget
+            amt.update(total_budget=None, total_budget_currency=None)
+            out.append(make_record(source=src, source_url=p["link"], program_name=title, text=txt, amount=amt,
                                    funder=FUNDER_IS + "; " + FUNDER_OGF + "; " + FUNDER_EUROPE,
                                    documents=collect_documents(soup, p["link"]), record_type="programme",
                                    published_at=p.get("date", "")[:10] or None,
@@ -856,34 +895,89 @@ def scrape_ogf(http: PoliteSession) -> list[dict]:
     return out
 
 
+# --------------------------------------------------------------------------- relevance scoring
+# The shared company profile has English keywords; municipal pages are Bulgarian, so each keyword
+# is also matched by its Bulgarian equivalents (stems).
+BG_SYNONYMS = {
+    "software": ["софтуер"],
+    "artificial intelligence": ["изкуствен интелект"],
+    "ai": ["изкуствен интелект"],
+    "machine learning": ["машинно обучение"],
+    "data analytics": ["анализ на данни", "данни"],
+    "digital": ["дигитал", "цифров"],
+    "it services": ["ит услуги", "информационни технологии", "икт"],
+    "cloud": ["облачн"],
+    "cybersecurity": ["киберсигурност"],
+    "web application": ["уеб приложение", "уебсайт", "онлайн платформ"],
+    "automation": ["автоматизац"],
+    "innovation": ["иноваци"],
+    "startup": ["стартъп", "стартиращ"],
+}
+
+
+def load_profile(path: str | None) -> dict:
+    if path and os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    return {"name": "Sofia Municipality (no profile)", "keywords": []}
+
+
+def _kw_hit(kw: str, text: str) -> bool:
+    terms = [kw.lower()] + BG_SYNONYMS.get(kw.lower(), [])
+    for t in terms:
+        if len(t) <= 3:  # short tokens like "AI" / "ИКТ" need word boundaries
+            if re.search(rf"(?<![\w]){re.escape(t)}(?![\w])", text):
+                return True
+        elif t in text:
+            return True
+    return False
+
+
+def score_records(records: list[dict], profile: dict) -> None:
+    """Same formula as eu_funding_tenders.score_match: hits (+0.5 per multi-word phrase) / #keywords."""
+    keywords = profile.get("keywords", [])
+    for r in records:
+        text = re.sub(r"\s+", " ", " ".join(str(r.get(k) or "") for k in
+                                            ("title", "description", "target_beneficiaries"))).lower()
+        hits = [kw for kw in keywords if _kw_hit(kw, text)]
+        bonus = sum(0.5 for kw in hits if " " in kw)
+        r["match_score"] = round(min(1.0, (len(hits) + bonus) / max(len(keywords), 1)), 3) if keywords else 0.0
+        r["matched_keywords"] = hits
+
+
 # --------------------------------------------------------------------------- output
-CSV_FIELDS = ["id", "source", "source_url", "program_name", "record_type", "funder", "status",
-              "deadline", "deadline_raw", "opens_at", "funding_amount_raw", "funding_min", "funding_max",
-              "funding_currency", "total_budget", "total_budget_currency", "target_beneficiaries",
-              "description", "language", "documents", "published_at", "scraped_at"]
+CSV_FIELDS = ["id", "site", "url", "title", "record_type", "funder", "status",
+              "start_date", "deadline", "deadline_raw", "opens_at", "funding_amount_raw", "funding_min",
+              "funding_max", "funding_currency", "total_budget", "total_budget_currency", "target_beneficiaries",
+              "summary", "description", "language", "documents", "published_at", "match_score",
+              "matched_keywords", "source", "scraped_at"]
 
 
 def to_row(r: dict) -> dict:
-    a, d = r["funding_amount"], r["deadline"]
-    return {
-        "id": r["id"], "source": r["source"], "source_url": r["source_url"], "program_name": r["program_name"],
-        "record_type": r["record_type"], "funder": r["funder"], "status": r["status"],
-        "deadline": d.get("date"), "deadline_raw": d.get("raw"), "opens_at": d.get("opens"),
+    a = r.get("funding_amount") or {}
+    row = {k: r.get(k) for k in CSV_FIELDS}
+    row.update({
         "funding_amount_raw": a.get("raw"), "funding_min": a.get("min"), "funding_max": a.get("max"),
         "funding_currency": a.get("currency"), "total_budget": a.get("total_budget"),
         "total_budget_currency": a.get("total_budget_currency"),
-        "target_beneficiaries": r["target_beneficiaries"], "description": r["description"],
-        "language": r["language"], "documents": " | ".join(r["documents"]),
-        "published_at": r["published_at"], "scraped_at": r["scraped_at"],
-    }
+        "documents": " | ".join(r.get("documents") or []),
+        "matched_keywords": ", ".join(r.get("matched_keywords") or []),
+    })
+    return row
 
 
-def write_outputs(records: list[dict], outdir: str) -> tuple[str, str]:
+def write_outputs(records: list[dict], outdir: str, profile_name: str) -> tuple[str, str]:
     os.makedirs(outdir, exist_ok=True)
-    jpath = os.path.join(outdir, "sofia_programs.json")
-    cpath = os.path.join(outdir, "sofia_programs.csv")
+    jpath = os.path.join(outdir, OUTPUT_BASENAME + ".json")
+    cpath = os.path.join(outdir, OUTPUT_BASENAME + ".csv")
+    payload = {  # top-level shape from docs/scraper-to-web-contract.md
+        "profile": profile_name,
+        "scraped_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "count": len(records),
+        "matches": records,
+    }
     with open(jpath, "w", encoding="utf-8") as f:
-        json.dump(records, f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
     with open(cpath, "w", encoding="utf-8-sig", newline="") as f:  # BOM so Excel shows Cyrillic
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         w.writeheader()
@@ -908,6 +1002,10 @@ def main(argv: Iterable[str] | None = None) -> int:
     ap.add_argument("--output-dir", default=DEFAULT_OUTPUT)
     ap.add_argument("--delay", type=float, default=1.5, help="seconds between requests to the same host")
     ap.add_argument("--max-sofia-pages", type=int, default=40)
+    ap.add_argument("--profile", default=DEFAULT_PROFILE,
+                    help="company profile JSON for match_score (default: eu_funding_tenders/company_profile.json)")
+    ap.add_argument("--min-score", type=float, default=0.0,
+                    help="drop records scoring below this (default 0 = keep all; the dataset is small)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(list(argv) if argv is not None else None)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -926,7 +1024,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         records.extend(recs)
     # de-duplicate by id
     uniq = list({r["id"]: r for r in records}.values())
-    jpath, cpath = write_outputs(uniq, args.output_dir)
+    profile = load_profile(args.profile)
+    score_records(uniq, profile)
+    uniq = [r for r in uniq if r["match_score"] >= args.min_score]
+    uniq.sort(key=lambda r: r["match_score"], reverse=True)
+    jpath, cpath = write_outputs(uniq, args.output_dir, profile.get("name", "N/A"))
     log.info("Wrote %d records -> %s, %s", len(uniq), jpath, cpath)
     if http.blocked:
         log.warning("Skipped by robots.txt: %d URLs", len(http.blocked))

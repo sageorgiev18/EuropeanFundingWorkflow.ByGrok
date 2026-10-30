@@ -48,7 +48,7 @@ The script discovers every `sources/*/scraper.py` and runs them one by one. Each
 ## Available sources
 
 - `sources/eu_funding_tenders/` — EU Funding & Tenders Portal (SEDIA API). Writes `data/eu_funding_tenders_matches.json`.
-- `sources/sofia_municipality/` — Sofia Municipality funding programmes. Writes `data/sofia_programs.json` (+ CSV).
+- `sources/sofia_municipality/` — Sofia Municipality funding programmes (sofia.bg, kultura.sofia.bg, mladite.sofia.bg, evropa-so.bg, investsofia.com, ogf-sofia.com). Run `python scraper.py`; writes `data/sofia_municipality_matches.json` in the `docs/scraper-to-web-contract.md` shape (`{profile, scraped_at, count, matches}`, `source: "sofia_municipality"`, `deadline` = `YYYY-MM-DD`/null, `status` = open/closed/upcoming/unknown, `match_score`/`matched_keywords` vs. the shared company profile) plus a flattened `.csv`. The web app merges all `data/*_matches.json`. See its README.
 
 ## Output location
 
