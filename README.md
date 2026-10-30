@@ -12,6 +12,7 @@ scrapers/     → structured JSON data → web/ (visualization)
 - **web/** — Web application that loads the data and provides search, filters, and charts.
 - **docs/architecture.md** — Full architecture and data schema.
 - **data/** — Optional shared location for scraper outputs.
+- **scrapers/sources/sofia_municipality/** — Sofia Municipality funding programmes scraper (see its README).
 
 ## Collaboration
 

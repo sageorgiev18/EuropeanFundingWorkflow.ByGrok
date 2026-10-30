@@ -27,3 +27,6 @@ Thumbs.db
 data/*.json
 !data/.gitkeep
 *.log
+
+# sofia_municipality scraper outputs (regenerate with scraper.py)
+data/sofia_programs.csv
